@@ -1,0 +1,17 @@
+[Unit]
+Description=Voice Transcribe (Ctrl+Alt+C)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/linux-transcribe-shortcut/voice-transcribe.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:%h/voice-transcribe.log
+StandardError=append:%h/voice-transcribe.log
+Environment=DISPLAY=:0
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+
+[Install]
+WantedBy=graphical-session.target

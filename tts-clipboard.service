@@ -1,0 +1,17 @@
+[Unit]
+Description=TTS Clipboard (Ctrl+Alt+V)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/linux-transcribe-shortcut/tts-clipboard.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:%h/tts-clipboard.log
+StandardError=append:%h/tts-clipboard.log
+Environment=DISPLAY=:0
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+
+[Install]
+WantedBy=graphical-session.target
