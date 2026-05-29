@@ -1,89 +1,76 @@
 # Linux Voice Transcribe
 
-A Linux background tool that records voice on a global hotkey and transcribes it to clipboard using Mistral's Voxtral model. Also includes a TTS clipboard reader.
+Two global keyboard shortcuts for voice and text on Linux (GNOME/Wayland).
 
-## Shortcuts
-
-- **Ctrl+Alt+C** — toggle recording on/off (speech to text, copies to clipboard)
-- **Ctrl+Alt+V** — read clipboard aloud using Google Cloud TTS
+- **Ctrl+Alt+C** — record voice, transcribe via Mistral Voxtral, copy to clipboard
+- **Ctrl+Alt+V** — read clipboard aloud via Google Cloud TTS, save MP3 to `~/Music/TTS Recordings/`
 
 ## Key files
 
-- `voice-transcribe.py` — main transcription script, reads `MISTRAL_API_KEY` from environment
-- `tts-clipboard.py` — TTS script, reads `GOOGLE_APPLICATION_CREDENTIALS` from environment
-- `voice-transcribe.service` — systemd user service template for transcription
-- `tts-clipboard.service` — systemd user service template for TTS
-- `setup.sh` — one-command setup for voice transcription
-- `setup-tts.sh` — one-command setup for TTS clipboard
+- `voice-transcribe-toggle.sh` — called by GNOME shortcut, manages PID file to toggle recording
+- `voice-transcribe-once.py` — records until killed (SIGTERM), then transcribes and copies to clipboard
+- `tts-clipboard.py` — reads clipboard via Google Cloud TTS, saves MP3, opens with xdg-open
+- `voice-transcribe.service` / `tts-clipboard.service` — systemd service templates (not used for voice transcribe on Wayland; kept for reference)
+- `setup.sh` / `setup-tts.sh` — setup scripts
 
-## Model
+## Architecture note (important)
 
-- Model: `voxtral-mini-latest`
-- Endpoint: `https://api.mistral.ai/v1/audio/transcriptions`
+**Voice transcribe does NOT use a systemd service.** pynput global hotkeys don't work from background services on Wayland. Instead, a GNOME custom keybinding calls `voice-transcribe-toggle.sh` directly. The toggle script uses `/tmp/voice-transcribe.pid` to track whether recording is active.
+
+TTS (`tts-clipboard.py`) also uses a GNOME keybinding (Ctrl+Alt+V) via the same pattern.
+
+## GNOME keybinding registration
+
+These are registered as `custom1` and `custom2` in gsettings:
+
+```bash
+gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings
+```
+
+To re-register voice transcribe if lost:
+
+```bash
+BASE="org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom1/"
+gsettings set $BASE name 'Voice Transcribe'
+gsettings set $BASE binding '<Ctrl><Alt>c'
+gsettings set $BASE command "$HOME/linux-transcribe-shortcut/voice-transcribe-toggle.sh"
+```
+
+## Environment variables
+
+- `MISTRAL_API_KEY` — set in `~/.bashrc`, read at runtime by `voice-transcribe-toggle.sh`
+- `GOOGLE_APPLICATION_CREDENTIALS` — set in `~/.bashrc`, read by `tts-clipboard.py`
+
+## Logs
+
+```bash
+tail -f ~/voice-transcribe.log
+tail -f ~/tts-clipboard.log
+```
+
+## Common failure modes
+
+**Shortcut does nothing** — GNOME keybinding lost (e.g. after settings reset). Re-register with gsettings commands above.
+
+**Stuck in recording state** — PID file left over from a crash:
+```bash
+pkill -f voice-transcribe-once.py && rm -f /tmp/voice-transcribe.pid
+```
+
+**"No speech detected"** — Recording too short, or wrong mic. Check: `arecord -l`
+
+**401 from Mistral** — API key wrong or expired. Update `MISTRAL_API_KEY` in `~/.bashrc`.
+
+**No notifications** — `libnotify` not installed: `sudo pacman -S libnotify`
+
+**xclip error** — `sudo pacman -S xclip`
+
+**sox not found** — `sudo pacman -S sox`
 
 ## System dependencies (Arch/EndeavourOS)
 
 ```bash
-sudo pacman -S sox xclip xdotool libnotify ffmpeg
-pip install --user pynput requests google-cloud-texttospeech
+sudo pacman -S sox xclip libnotify ffmpeg
+yay -S python-pynput
+sudo pacman -S python-requests
 ```
-
-## Setup
-
-```bash
-chmod +x setup.sh setup-tts.sh
-./setup.sh       # voice transcription
-./setup-tts.sh   # TTS clipboard (optional)
-```
-
-## Managing services
-
-```bash
-# Status
-systemctl --user status voice-transcribe
-systemctl --user status tts-clipboard
-
-# Stop
-systemctl --user stop voice-transcribe
-systemctl --user stop tts-clipboard
-
-# Start
-systemctl --user start voice-transcribe
-systemctl --user start tts-clipboard
-
-# Restart after config changes
-systemctl --user restart voice-transcribe
-
-# View logs
-tail -f ~/voice-transcribe.log
-tail -f ~/tts-clipboard.log
-
-# Disable autostart
-systemctl --user disable voice-transcribe
-systemctl --user disable tts-clipboard
-```
-
-## Common problems
-
-**No notifications showing** — `libnotify` must be installed (`sudo pacman -S libnotify`) and a notification daemon must be running (GNOME has one built in).
-
-**"sox not found"** in the log — `sox` not installed. Run `sudo pacman -S sox`.
-
-**Clipboard not working** — `xclip` not installed. Run `sudo pacman -S xclip`. On Wayland you may need `wl-clipboard` instead and replace `xclip` calls with `wl-copy`/`wl-paste`.
-
-**Shortcut works in terminal but not in background** — The service may not have the right `DISPLAY` or `DBUS_SESSION_BUS_ADDRESS`. Check the service file has correct values and restart: `systemctl --user restart voice-transcribe`.
-
-**Service fails to start** — Check logs: `journalctl --user -u voice-transcribe -n 50`. Most common cause is `MISTRAL_API_KEY` not set in the service environment.
-
-**Wayland note** — `pynput` global hotkeys require `XWayland` on Wayland sessions. If shortcuts don't work, ensure `xorg-xwayland` is installed and the session is running in XWayland compatibility mode.
-
-**No speech detected** — Recording may be too short, or wrong microphone selected. Check: `arecord -l` to list devices; set default in system sound settings.
-
-## Environment variables
-
-Both scripts read from environment. The setup scripts inject these into the systemd service files:
-
-- `MISTRAL_API_KEY` — required for voice-transcribe.py
-- `GOOGLE_APPLICATION_CREDENTIALS` — required for tts-clipboard.py
-- `DISPLAY` — required for pynput to capture global keys (usually `:0`)
-- `DBUS_SESSION_BUS_ADDRESS` — required for notify-send to work from services
